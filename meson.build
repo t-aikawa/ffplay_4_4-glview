@@ -6,9 +6,7 @@ project('ffplay', 'c',
 
 
 # glviewのパスを指定してください。
-#glview = '../glview/'
-glview = '../glview011/'
-#glview = '../navi119/'
+glview = '../glview/'
 
 message('glview project:',glview)
 
