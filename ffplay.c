@@ -29,6 +29,7 @@
 #include <limits.h>
 #include <signal.h>
 #include <stdint.h>
+#include <sys/time.h>
 
 #include "libavutil/avstring.h"
 #include "libavutil/eval.h"
@@ -70,6 +71,8 @@
 
 #ifdef _GLVIEW_IMPLEMENTATION_
 #include "glview.h"
+
+//#define _GLVIEW_BENCHMARK_FPS
 
 typedef struct _my_Texture{
 	uint32_t	pix_fmt;
@@ -584,6 +587,8 @@ typedef struct VideoState {
     SDL_Texture *vid_texture;
 #ifdef _GLVIEW_IMPLEMENTATION_
 	SDL_Rect vid_rgb_rect;
+	uint32_t benchmark_time;
+	uint32_t benchmark_frames;
 #endif /* _GLVIEW_IMPLEMENTATION_ */
 
     int subtitle_stream;
@@ -1780,6 +1785,7 @@ static void video_display(VideoState *is)
     SDL_RenderPresent(renderer);
 #else /* _GLVIEW_IMPLEMENTATION_ */
 	glvReqSwapBuffers(main_window);
+	is->benchmark_frames++;
 #endif /* _GLVIEW_IMPLEMENTATION_ */
 }
 
@@ -4256,8 +4262,8 @@ static int function(glvWindow glv_win,unsigned int key,unsigned int modifiers,un
 	if(glv_win == NULL){
 		return(GLV_ERROR);
 	}
-	struct window_user_data *window_user_data = glv_getUserData(glv_win);
-	cur_stream = window_user_data->cur_stream;
+	struct window_user_data *window = glv_getUserData(glv_win);
+	cur_stream = window->cur_stream;
 	if(cur_stream == NULL){
 		return(GLV_ERROR);
 	}
@@ -4379,8 +4385,26 @@ static int user_msg(glvWindow glv_win,int kind,void *data)
 {
 	VideoState *is;
 	double remaining_time = REFRESH_RATE;
-	struct window_user_data *window_user_data = glv_getUserData(glv_win);
-	is = window_user_data->cur_stream;
+	struct window_user_data *window = glv_getUserData(glv_win);
+	is = window->cur_stream;
+
+#ifdef _GLVIEW_BENCHMARK_FPS
+	uint32_t benchmark_interval = 5;
+	struct timeval tv;
+	uint32_t time;
+	gettimeofday(&tv, NULL);
+	time = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+	if (is->benchmark_frames == 0)
+		is->benchmark_time = time;
+	if (time - is->benchmark_time > (benchmark_interval * 1000)) {
+		printf("ffplay[%s]: %d frames in %d seconds: %f fps                \n",glvWindow_getWindowName(glv_win),
+		       is->benchmark_frames,
+		       benchmark_interval,
+		       (float) is->benchmark_frames / benchmark_interval);
+		is->benchmark_time = time;
+		is->benchmark_frames = 0;
+	}
+#endif /* _GLVIEW_BENCHMARK_FPS */
 
 	if (is->show_mode != SHOW_MODE_NONE && (!is->paused || is->force_refresh)){
 		video_refresh(is, &remaining_time);
@@ -4395,8 +4419,8 @@ static void redraw(glvWindow glv_win)
 {
 	VideoState *is;
 	double remaining_time = REFRESH_RATE;
-	struct window_user_data *window_user_data = glv_getUserData(glv_win);
-	is = window_user_data->cur_stream;
+	struct window_user_data *window = glv_getUserData(glv_win);
+	is = window->cur_stream;
 
     glClearColor(0.0, 0.0, 0.0, 1.0);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -4412,7 +4436,7 @@ static int window_init(glvWindow glv_win,int width, int height)
 	glvWindow_setViewport(glv_win,width,height);
 
 	glv_allocUserData(glv_win,sizeof(struct window_user_data));
-	struct window_user_data *window_user_data = glv_getUserData(glv_win);
+	struct window_user_data *window = glv_getUserData(glv_win);
 
 	renderer = SDL_CreateRenderer(glv_win,-1,0);
 	if (renderer) {
@@ -4420,8 +4444,8 @@ static int window_init(glvWindow glv_win,int width, int height)
 			av_log(NULL, AV_LOG_VERBOSE, "Initialized %s renderer.\n", renderer_info.name);
 	}
 
-    window_user_data->cur_stream = stream_open(input_filename, file_iformat);
-    if (!window_user_data->cur_stream) {
+    window->cur_stream = stream_open(input_filename, file_iformat);
+    if (!window->cur_stream) {
         av_log(NULL, AV_LOG_FATAL, "Failed to initialize VideoState!\n");
         do_exit(NULL);
     }
@@ -4434,8 +4458,8 @@ static int window_init(glvWindow glv_win,int width, int height)
 static int window_reshape(glvWindow glv_win,int width, int height)
 {
 	VideoState *cur_stream;
-	struct window_user_data *window_user_data = glv_getUserData(glv_win);
-	cur_stream = window_user_data->cur_stream;
+	struct window_user_data *window = glv_getUserData(glv_win);
+	cur_stream = window->cur_stream;
 
 	glvWindow_setViewport(glv_win,width,height);
 
@@ -4475,7 +4499,7 @@ int main_frame_start(glvWindow frame_window,int width, int height)
 	test_set_pulldownMenu(frame_window);
 
 	// 描画用のウインドウを作成する
-	glvCreateWindow(frame_window,window_listener,&main_window,"window",0, 0, width, height,GLV_WINDOW_ATTR_DEFAULT);
+	main_window = glvCreateWindow(frame_window,window_listener,"window",0, 0, width, height,GLV_WINDOW_ATTR_DEFAULT,NULL);
 	glvOnReDraw(main_window);	// 	描画要求
 	return(GLV_OK);
 }
@@ -4527,7 +4551,7 @@ int main(int argc, char *argv[])
 	}
 
 	// フレームを作成する
-	glvCreateFrameWindow(glv_dpy,frame_window_listener,&frame_window,"frame","ffplay",default_width, default_height);
+	frame_window = glvCreateFrameWindow(glv_dpy,frame_window_listener,"frame","ffplay",default_width, default_height,NULL);
 	
 	/* ----------------------------------------------------------------------------------------------- */
 	glvEnterEventLoop(glv_dpy);		// event loop
